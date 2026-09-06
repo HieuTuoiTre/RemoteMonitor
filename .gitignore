@@ -3,3 +3,5 @@ build/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+release/
+RemoteMonitor-Windows-x64.zip
