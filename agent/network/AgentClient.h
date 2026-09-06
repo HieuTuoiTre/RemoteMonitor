@@ -28,6 +28,7 @@ private slots:
 
 private:
     void sendSystemInfo(const QString& type, const QString& requestId = {});
+    void clearFramedSocket();
     QTcpSocket socket_;
     monitor::FramedSocket* framed_ = nullptr;
     QTimer heartbeatTimer_;
@@ -36,4 +37,6 @@ private:
     quint16 port_ = 45454;
     QString agentId_;
     bool controlEnabled_ = false;
+    bool controlPromptActive_ = false;
+    bool manualDisconnect_ = false;
 };

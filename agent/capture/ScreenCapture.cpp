@@ -8,16 +8,17 @@
 
 namespace agent_capture {
 
-QByteArray screenshotJpeg() {
+QByteArray screenshotJpeg(int maxWidth, int maxHeight, int quality) {
     QScreen* screen = QGuiApplication::primaryScreen();
     if (!screen) return {};
     QPixmap pixmap = screen->grabWindow(0);
+    if (pixmap.isNull()) return {};
     QImage image = pixmap.toImage();
-    image = image.scaled(1280, 720, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    image = image.scaled(maxWidth, maxHeight, Qt::KeepAspectRatio, Qt::FastTransformation);
     QByteArray bytes;
     QBuffer buffer(&bytes);
     buffer.open(QIODevice::WriteOnly);
-    image.save(&buffer, "JPG", 65);
+    if (!image.save(&buffer, "JPG", qBound(20, quality, 90))) return {};
     return bytes;
 }
 

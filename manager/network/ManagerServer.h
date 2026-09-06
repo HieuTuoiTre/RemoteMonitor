@@ -23,7 +23,8 @@ class ManagerServer final : public QObject {
 public:
     explicit ManagerServer(QObject* parent = nullptr);
     bool listen(quint16 port, QString* error = nullptr);
-    void requestScreenshot(const QString& agentId);
+    bool requestScreenshot(const QString& agentId, int maxWidth = 960,
+                           int maxHeight = 540, int quality = 55);
     void requestControl(const QString& agentId);
     void stopControl(const QString& agentId);
     void requestSystemInfo(const QString& agentId);
@@ -48,6 +49,7 @@ private:
         QTcpSocket* socket = nullptr;
         monitor::FramedSocket* framed = nullptr;
         QString agentId;
+        bool screenshotRequestPending = false;
     };
     Connection* currentConnection(const QString& agentId) const;
     QTcpServer server_;

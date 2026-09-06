@@ -1,5 +1,7 @@
 #include "manager/ui/ManagerWindow.h"
 
+#include "manager/ui/ObservationWindow.h"
+
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -55,7 +57,7 @@ void ManagerWindow::login() {
     }
     database_.recordAudit(username_->text(), "login");
     buildDashboardUi();
-    screenshotTimer_.setInterval(1000);
+    screenshotTimer_.setInterval(1000 / 30);
     connect(&screenshotTimer_, &QTimer::timeout, this, &ManagerWindow::requestScreenshot);
     screenshotTimer_.start();
     setWindowTitle("Remote Monitor - Manager");
@@ -65,6 +67,15 @@ void ManagerWindow::buildDashboardUi() {
     auto* root = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(root);
     auto* splitter = new QSplitter(Qt::Vertical, root);
+    observation_ = new ObservationWindow(this);
+    connect(observation_, &ObservationWindow::requestControl,
+            this, &ManagerWindow::requestControl);
+    connect(observation_, &ObservationWindow::stopControl,
+            this, &ManagerWindow::stopControl);
+    connect(observation_, &ObservationWindow::mouseEvent,
+            this, &ManagerWindow::sendMouse);
+    connect(observation_, &ObservationWindow::keyEvent,
+            this, &ManagerWindow::sendKey);
     auto* upper = new QSplitter(Qt::Horizontal, splitter);
     agents_ = new QTableWidget(0, 7, upper);
     agents_->setHorizontalHeaderLabels({"Agent", "Host", "IP", "OS", "CPU", "RAM", "Status"});
@@ -77,6 +88,9 @@ void ManagerWindow::buildDashboardUi() {
     detail_ = new QLabel("Select an agent");
     rightLayout->addWidget(detail_);
     auto* refresh = new QPushButton("Request screenshot");
+    frameRate_ = new QComboBox;
+    frameRate_->addItem("30 FPS - HD (1280x720)", 30);
+    frameRate_->addItem("60 FPS - HD performance (1280x720)", 60);
     auto* control = new QPushButton("Request control");
     auto* stop = new QPushButton("Stop control");
     command_ = new QComboBox;
@@ -86,7 +100,13 @@ void ManagerWindow::buildDashboardUi() {
     connect(control, &QPushButton::clicked, this, &ManagerWindow::requestControl);
     connect(stop, &QPushButton::clicked, this, &ManagerWindow::stopControl);
     connect(run, &QPushButton::clicked, this, &ManagerWindow::sendSafeCommand);
+    connect(frameRate_, &QComboBox::currentIndexChanged, this, [this](int) {
+        const int fps = frameRate_->currentData().toInt();
+        screenshotTimer_.setInterval(qMax(1, 1000 / qMax(1, fps)));
+    });
     rightLayout->addWidget(refresh);
+    rightLayout->addWidget(new QLabel("Screen refresh profile"));
+    rightLayout->addWidget(frameRate_);
     rightLayout->addWidget(control);
     rightLayout->addWidget(stop);
     rightLayout->addWidget(command_);
@@ -94,13 +114,9 @@ void ManagerWindow::buildDashboardUi() {
     rightLayout->addStretch();
     upper->addWidget(agents_);
     upper->addWidget(right);
-    controlView_ = new ControlView(splitter);
-    connect(controlView_, &ControlView::mouseEvent, this, &ManagerWindow::sendMouse);
-    connect(controlView_, &ControlView::keyEvent, this, &ManagerWindow::sendKey);
     log_ = new QTextEdit(splitter);
     log_->setReadOnly(true);
     splitter->addWidget(upper);
-    splitter->addWidget(controlView_);
     splitter->addWidget(log_);
     mainLayout->addWidget(splitter);
     setCentralWidget(root);
@@ -108,7 +124,8 @@ void ManagerWindow::buildDashboardUi() {
 
 QString ManagerWindow::selectedAgent() const {
     if (!agents_ || agents_->currentRow() < 0) return {};
-    return agents_->item(agents_->currentRow(), 0)->text();
+    auto* item = agents_->item(agents_->currentRow(), 0);
+    return item ? item->text() : QString{};
 }
 
 void ManagerWindow::refreshAgent(const AgentSnapshot& snapshot) {
@@ -122,11 +139,9 @@ void ManagerWindow::refreshAgent(const AgentSnapshot& snapshot) {
                                 QString::number(snapshot.memory, 'f', 1),
                                 snapshot.online ? "Online" : "Offline"};
     for (int i = 0; i < values.size(); ++i) agents_->setItem(row, i, new QTableWidgetItem(values[i]));
-    if (!snapshot.screenshot.isEmpty() && snapshot.id == selectedAgent()) {
-        QPixmap pix;
-        if (pix.loadFromData(snapshot.screenshot, "JPG"))
-            controlView_->setPixmap(pix.scaled(controlView_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    }
+    if (agents_->currentRow() < 0 && snapshot.online) agents_->selectRow(row);
+    if (!snapshot.screenshot.isEmpty() && observation_ && snapshot.id == observation_->agentId())
+        observation_->setFrame(snapshot.screenshot);
     detail_->setText(QString("Agent: %1\nHost: %2\nCPU: %3%\nRAM: %4%\nStatus: %5")
                          .arg(snapshot.id, snapshot.hostname)
                          .arg(snapshot.cpu, 0, 'f', 1)
@@ -134,14 +149,30 @@ void ManagerWindow::refreshAgent(const AgentSnapshot& snapshot) {
                          .arg(snapshot.online ? "Online" : "Offline"));
 }
 
-void ManagerWindow::selectAgent() { controlEnabled_ = false; controlView_->setEnabledControl(false); }
+void ManagerWindow::selectAgent() {
+    controlEnabled_ = false;
+    const QString id = selectedAgent();
+    if (observation_) {
+        observation_->setControlEnabled(false);
+        observation_->setAgentId(id);
+        if (!id.isEmpty()) {
+            observation_->show();
+            observation_->raise();
+            observation_->activateWindow();
+        }
+    }
+}
 void ManagerWindow::controlApproval(const QString& agentId, bool approved) {
     if (agentId != selectedAgent()) return;
     controlEnabled_ = approved;
-    controlView_->setEnabledControl(approved);
+    if (observation_) observation_->setControlEnabled(approved);
     appendLog(approved ? "Agent approved control." : "Agent denied control.");
 }
-void ManagerWindow::requestScreenshot() { server_.requestScreenshot(selectedAgent()); }
+void ManagerWindow::requestScreenshot() {
+    const int fps = frameRate_ ? frameRate_->currentData().toInt() : 30;
+    const bool performanceMode = fps >= 60;
+    server_.requestScreenshot(selectedAgent(), 1280, 720, performanceMode ? 45 : 55);
+}
 void ManagerWindow::requestControl() {
     const QString id = selectedAgent();
     if (id.isEmpty()) return;
@@ -154,7 +185,7 @@ void ManagerWindow::stopControl() {
     database_.recordAudit(username_->text(), "control_stop", id);
     server_.stopControl(id);
     controlEnabled_ = false;
-    controlView_->setEnabledControl(false);
+    if (observation_) observation_->setControlEnabled(false);
 }
 void ManagerWindow::sendSafeCommand() {
     const QString id = selectedAgent();
@@ -165,12 +196,12 @@ void ManagerWindow::sendSafeCommand() {
 }
 
 void ManagerWindow::sendMouse(const QString& kind, int x, int y, int button) {
-    if (!controlEnabled_) return;
+    if (!controlEnabled_ || !observation_ || observation_->agentId() != selectedAgent()) return;
     server_.sendControlEvent(selectedAgent(), {{"kind", kind}, {"x", x}, {"y", y}, {"button", button}});
 }
 
 void ManagerWindow::sendKey(int key, bool pressed) {
-    if (!controlEnabled_) return;
+    if (!controlEnabled_ || !observation_ || observation_->agentId() != selectedAgent()) return;
     server_.sendControlEvent(selectedAgent(), {{"kind", "key"}, {"key", key}, {"pressed", pressed}});
 }
 

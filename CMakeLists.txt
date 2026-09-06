@@ -28,6 +28,8 @@ add_executable(monitor_manager
     manager/ui/ManagerWindow.h
     manager/ui/ControlView.cpp
     manager/ui/ControlView.h
+    manager/ui/ObservationWindow.cpp
+    manager/ui/ObservationWindow.h
 )
 target_link_libraries(monitor_manager PRIVATE monitor_common Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Sql)
 

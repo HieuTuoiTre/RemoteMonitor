@@ -2,7 +2,6 @@
 
 #include "manager/database/Database.h"
 #include "manager/network/ManagerServer.h"
-#include "manager/ui/ControlView.h"
 
 #include <QMainWindow>
 #include <QTableWidget>
@@ -40,9 +39,10 @@ private:
     QLineEdit* password_ = nullptr;
     QLabel* loginStatus_ = nullptr;
     QTableWidget* agents_ = nullptr;
-    ControlView* controlView_ = nullptr;
+    class ObservationWindow* observation_ = nullptr;
     QLabel* detail_ = nullptr;
     QComboBox* command_ = nullptr;
+    QComboBox* frameRate_ = nullptr;
     QTextEdit* log_ = nullptr;
     QTimer screenshotTimer_;
     bool controlEnabled_ = false;

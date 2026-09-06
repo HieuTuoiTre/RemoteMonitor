@@ -75,6 +75,7 @@ void ManagerServer::handleMessage(const monitor::Message& message) {
         emit agentChanged(snapshot);
     } else if (message.type == "screenshot_response") {
         snapshot.screenshot = QByteArray::fromBase64(message.data.value("jpeg").toString().toLatin1());
+        connection->screenshotRequestPending = false;
         emit agentChanged(snapshot);
     } else if (message.type == "control_approval") {
         emit controlApproved(connection->agentId, message.data.value("approved").toBool());
@@ -83,6 +84,10 @@ void ManagerServer::handleMessage(const monitor::Message& message) {
             QString::fromUtf8(QJsonDocument(message.data).toJson(QJsonDocument::Compact))));
     } else if (message.type == "audit_event") {
         emit logMessage(QString("[%1] %2").arg(connection->agentId, message.data.value("action").toString()));
+    } else if (message.type == "error") {
+        connection->screenshotRequestPending = false;
+        emit logMessage(QString("[%1] error: %2").arg(connection->agentId,
+            message.data.value("error").toString()));
     }
 }
 
@@ -101,18 +106,27 @@ void ManagerServer::handleDisconnected() {
     }
 }
 
-void ManagerServer::requestScreenshot(const QString& agentId) {
-    if (auto* connection = currentConnection(agentId))
-        connection->framed->send(monitor::makeMessage("screenshot_request"));
+bool ManagerServer::requestScreenshot(const QString& agentId, int maxWidth,
+                                      int maxHeight, int quality) {
+    auto* connection = currentConnection(agentId);
+    if (!connection || !connection->framed || connection->screenshotRequestPending ||
+        connection->socket->state() != QAbstractSocket::ConnectedState)
+        return false;
+    connection->screenshotRequestPending = true;
+    connection->framed->send(monitor::makeMessage("screenshot_request", {
+        {"max_width", maxWidth}, {"max_height", maxHeight}, {"jpeg_quality", quality}}));
+    return true;
 }
 
 void ManagerServer::requestControl(const QString& agentId) {
-    if (auto* connection = currentConnection(agentId))
+    if (auto* connection = currentConnection(agentId);
+        connection && connection->framed && connection->socket->state() == QAbstractSocket::ConnectedState)
         connection->framed->send(monitor::makeMessage("control_request"));
 }
 
 void ManagerServer::stopControl(const QString& agentId) {
-    if (auto* connection = currentConnection(agentId))
+    if (auto* connection = currentConnection(agentId);
+        connection && connection->framed && connection->socket->state() == QAbstractSocket::ConnectedState)
         connection->framed->send(monitor::makeMessage("control_stop"));
 }
 
@@ -132,6 +146,7 @@ void ManagerServer::sendCommand(const QString& agentId, const QString& command) 
 }
 
 void ManagerServer::sendControlEvent(const QString& agentId, const QJsonObject& event) {
-    if (auto* connection = currentConnection(agentId))
+    if (auto* connection = currentConnection(agentId);
+        connection && connection->framed && connection->socket->state() == QAbstractSocket::ConnectedState)
         connection->framed->send(monitor::makeMessage("control_event", event));
 }

@@ -24,22 +24,30 @@ AgentClient::AgentClient(QObject* parent) : QObject(parent) {
 }
 
 void AgentClient::connectToManager(const QString& host, quint16 port) {
-    host_ = host; port_ = port;
+    host_ = host;
+    port_ = port;
+    manualDisconnect_ = false;
     reconnectTimer_.stop();
+    clearFramedSocket();
+    socket_.abort();
     socket_.connectToHost(host_, port_);
     emit statusChanged(QString("Connecting to %1:%2").arg(host_).arg(port_));
 }
 
 void AgentClient::disconnectFromManager() {
+    manualDisconnect_ = true;
+    controlEnabled_ = false;
+    controlPromptActive_ = false;
     heartbeatTimer_.stop();
     reconnectTimer_.stop();
+    clearFramedSocket();
     socket_.disconnectFromHost();
     emit statusChanged("Disconnected");
 }
 
 void AgentClient::connected() {
     reconnectTimer_.stop();
-    if (framed_) framed_->deleteLater();
+    clearFramedSocket();
     framed_ = new monitor::FramedSocket(&socket_, this);
     connect(framed_, &monitor::FramedSocket::messageReceived, this, &AgentClient::messageReceived);
     connect(framed_, &monitor::FramedSocket::protocolError, this, [this](const QString& error) {
@@ -52,13 +60,18 @@ void AgentClient::connected() {
 }
 
 void AgentClient::reconnect() {
+    clearFramedSocket();
     heartbeatTimer_.stop();
-    if (!host_.isEmpty()) {
+    controlEnabled_ = false;
+    controlPromptActive_ = false;
+    if (!manualDisconnect_ && !host_.isEmpty()) {
         if (!reconnectTimer_.isActive()) reconnectTimer_.start();
-        socket_.abort();
-        socket_.connectToHost(host_, port_);
+        if (socket_.state() == QAbstractSocket::UnconnectedState)
+            socket_.connectToHost(host_, port_);
+        emit statusChanged("Offline - retrying");
+        return;
     }
-    emit statusChanged("Offline - retrying");
+    emit statusChanged("Disconnected");
 }
 
 void AgentClient::heartbeat() {
@@ -77,12 +90,25 @@ void AgentClient::messageReceived(const monitor::Message& message) {
     } else if (message.type == "process_list_request") {
         framed_->send(monitor::makeMessage("process_list_response", agent_system::processList(), message.requestId));
     } else if (message.type == "screenshot_request") {
+        const int width = qBound(320, message.data.value("max_width").toInt(960), 1920);
+        const int height = qBound(180, message.data.value("max_height").toInt(540), 1080);
+        const int quality = qBound(20, message.data.value("jpeg_quality").toInt(55), 90);
+        const QByteArray screenshot = agent_capture::screenshotJpeg(width, height, quality);
+        if (screenshot.isEmpty()) {
+            framed_->send(monitor::makeMessage("error", {{"error", "screen capture failed"}}, message.requestId));
+            return;
+        }
         framed_->send(monitor::makeMessage("screenshot_response",
-            {{"jpeg", QString::fromLatin1(agent_capture::screenshotJpeg().toBase64())}}, message.requestId));
+            {{"jpeg", QString::fromLatin1(screenshot.toBase64())},
+             {"width", width}, {"height", height}}, message.requestId));
     } else if (message.type == "control_request") {
-        emit controlRequested();
+        if (!controlEnabled_ && !controlPromptActive_) {
+            controlPromptActive_ = true;
+            emit controlRequested();
+        }
     } else if (message.type == "control_stop") {
         controlEnabled_ = false;
+        controlPromptActive_ = false;
         emit controlStopped();
     } else if (message.type == "control_event" && controlEnabled_) {
         agent_input::apply(message.data);
@@ -98,6 +124,14 @@ void AgentClient::messageReceived(const monitor::Message& message) {
 }
 
 void AgentClient::approveControl(bool approved) {
+    controlPromptActive_ = false;
     controlEnabled_ = approved;
     if (framed_) framed_->send(monitor::makeMessage("control_approval", {{"approved", approved}}));
+}
+
+void AgentClient::clearFramedSocket() {
+    if (!framed_) return;
+    framed_->disconnect(this);
+    delete framed_;
+    framed_ = nullptr;
 }

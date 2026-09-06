@@ -7,6 +7,18 @@ MVP cho đề tài PBL4 509: giám sát và điều khiển máy tính Windows t
 - `monitor_manager`: Qt GUI, TCP server, SQLite và danh sách agent.
 - `monitor_agent`: Qt GUI, kết nối chủ động tới manager, heartbeat, thông tin hệ thống,
   screenshot và quyền điều khiển có xác nhận.
+
+## Screen viewer performance
+
+The Manager screen viewer uses a back-pressure pipeline: it asks an Agent for a
+new frame only after the previous one arrives. This prevents the TCP write queue
+from growing until the UI lags or becomes unstable.
+
+- **30 FPS - HD** (default): JPEG up to 1280x720, quality 55.
+- **60 FPS - HD performance**: JPEG up to 1280x720, quality 45.
+
+These are target rates. The achieved rate depends on the Agent CPU, Wi-Fi/LAN
+bandwidth and display resolution. Select the profile in the Manager dashboard.
 - `monitor_common`: JSON message protocol và TCP length-prefixed framing.
 - Không có keylogger ẩn, không lưu nội dung phím và không chạy shell tùy ý.
 

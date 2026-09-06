@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QLabel>
+#include <QElapsedTimer>
 
 class ControlView final : public QLabel {
     Q_OBJECT
@@ -20,4 +21,5 @@ protected:
 
 private:
     bool enabledControl_ = false;
+    QElapsedTimer moveClock_;
 };
