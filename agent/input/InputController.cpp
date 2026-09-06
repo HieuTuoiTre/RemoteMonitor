@@ -1,0 +1,42 @@
+#include "agent/input/InputController.h"
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
+namespace agent_input {
+
+bool apply(const QJsonObject& event) {
+#ifdef Q_OS_WIN
+    const QString kind = event.value("kind").toString();
+    if (kind == "key") {
+        INPUT input{};
+        input.type = INPUT_KEYBOARD;
+        input.ki.wVk = static_cast<WORD>(event.value("key").toInt());
+        input.ki.dwFlags = event.value("pressed").toBool() ? 0 : KEYEVENTF_KEYUP;
+        return SendInput(1, &input, sizeof(INPUT)) == 1;
+    }
+    if (kind == "press") {
+        INPUT input{};
+        input.type = INPUT_MOUSE;
+        input.mi.dwFlags = event.value("button").toInt() == 1
+                               ? MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP
+                               : MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_RIGHTUP;
+        return SendInput(1, &input, sizeof(INPUT)) == 1;
+    }
+    if (kind == "move") {
+        INPUT input{};
+        input.type = INPUT_MOUSE;
+        input.mi.dx = event.value("x").toInt();
+        input.mi.dy = event.value("y").toInt();
+        input.mi.dwFlags = MOUSEEVENTF_MOVE;
+        return SendInput(1, &input, sizeof(INPUT)) == 1;
+    }
+    return true;
+#else
+    Q_UNUSED(event);
+    return false;
+#endif
+}
+
+}
